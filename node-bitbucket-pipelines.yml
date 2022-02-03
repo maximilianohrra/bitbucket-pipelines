@@ -1,0 +1,77 @@
+#THIS PIPE RUNS A BASH SCRIPT TO DEPLOY AN IMAGE; THE SCRIPT IS IN "Bash Scripts" Repo:
+clone:
+  depth: full
+
+definitions:
+  services:
+    docker:
+      memory: 6656
+  steps: 
+    - step: &Running-Test
+          name: Run tests
+          image: node:lts-alpine
+          script:
+            - npm ci
+            - npm run test
+  
+    - step: &Running-Build
+          runs-on:
+            - 'experta'
+          name: 'Running Build'
+          caches:
+            - node
+          image: node:lts-alpine
+          script:
+            - npm install
+            - CI=false npm run build
+          artifacts:
+            - build/**
+    
+    - step: &Deploy-Runner
+          name: 'Deploying Runner'
+          runs-on:
+            - 'experta'
+          image: eeacms/scp-server
+          script:
+            #crea dir oculta .ssh
+            - mkdir -p ~/.ssh/
+            # scanea la llave y la guarda en un archivo de host y la guarda en el dir
+            - ssh-keyscan -t rsa ${HOST} > my_known_host
+            - cat my_known_hosts >> ~/.ssh/known_hosts
+            # Decodifica la key y la ingresa en el dir con nombre id_rsa
+            - (umask  077 ; echo $SSH_PRIVATE_KEY | base64 --decode > ~/.ssh/id_rsa)
+            # Aplica variables de entorno y substituye en el .env del host
+            - ssh $SSH_USER@${HOST} envsubst < env.tmp.template | tee .env
+            # Se crea carpeta en el directorio del host
+            - ssh -i ~/.ssh/id_rsa $SSH_USER@${HOST} "mkdir -p /docker/servicios/${SERVICIO}"
+            # Se realiza una copia recursiva de los directorios correspondientes y las properties dentro de la carpeta del servicio a crear           
+            - scp -i ~/.ssh/id_rsa -r ./build ./* $SSH_USER@${HOST}:/docker/servicios/${SERVICIO}/.
+            # Se ejecuta el script tomando como variantes SERVICIO, DIRECTORIO, E IMAGEN
+            - ssh -i ~/.ssh/id_rsa -T $SSH_USER@${HOST} "/docker/imagenes/scripts/orquestador-2.bash --servicio ${SERVICIO} --sitio /${DIRECTORIO} --imagen ${IMAGEN}"
+pipelines:
+  branches:
+    default:
+      - step:
+          <<: *Running-Test
+    
+    test:
+      - step:
+          <<: *Running-Test
+      - step:
+          <<: *Running-Build
+      - step:
+          deployment: Test
+          <<: *Deploy-Runner
+    dev:
+      - step:
+          <<: *Running-Build      
+      - step:
+          deployment: dev
+          <<: *Deploy-Runner
+            
+    master:
+      - step:
+          <<: *Running-Build
+      - step:
+          deployment: Prod
+          <<: *Deploy-Runner
