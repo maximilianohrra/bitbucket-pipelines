@@ -1,0 +1,85 @@
+clone:
+  depth: full
+
+definitions:
+  services:
+    docker:
+      memory: 6656
+   
+  steps: 
+    - step: &Running-Build-verify
+        name: 'Running-Build'
+        runs-on: 
+          - 'experta'
+        image: maven:3.6.3-adoptopenjdk-
+        caches:
+            - maven
+        script:
+            # Verifica que el código empaquetado es válido 
+            - mvn verify
+        artifacts:
+            # Toma como artefactos 
+            - target/*.jar
+            - target/classes/*
+            - src/main/resources/*.properties 
+    
+    - step: &Running-Build-package
+          runs-on:
+            - 'experta'
+          name: 'Running Build'
+          image: maven:3.6.3-adoptopenjdk-8
+          caches:
+            - maven
+          script:
+            - mvn package -DskipTests=true
+          artifacts:
+            - target/*.jar
+            - src/main/resources/*.properties
+    
+    - step: &Deploy-Runner
+          name: 'SCP & SSH Runner'
+          runs-on:
+            - 'experta'
+          image: eeacms/scp-server
+          script:
+            #crea dir oculta .ssh
+            - mkdir -p ~/.ssh/
+            # scanea la llave y la guarda en un archivo de host y la guarda en el dir
+            - ssh-keyscan -t rsa ${HOST} > my_known_host
+            - cat my_known_hosts >> ~/.ssh/known_hosts
+            # Decodifica la key y la ingresa en el dir con nombre id_rsa
+            - (umask  077 ; echo $SSH_PRIVATE_KEY | base64 --decode > ~/.ssh/id_rsa)
+            # Aplica variables de entorno y substituye en el .env del host
+            - ssh $SSH_USER@${HOST} envsubst < env.tmp.template | tee .env
+            # Se crea carpeta en el directorio del host
+            - ssh -i ~/.ssh/id_rsa $SSH_USER@${HOST} "mkdir -p /docker/servicios/${SERVICIO}"
+            # Se realiza una copia recursiva de los directorios correspondientes y las properties dentro de la carpeta del servicio a crear
+            - scp -i ~/.ssh/id_rsa -r ./target ./src/main/resources/*.properties $SSH_USER@${HOST}:/docker/servicios/${SERVICIO}/.
+            # Se ejecuta el script tomando como variantes SERVICIO, .JAR,  .PROPERTIES, ACTIVE-PROFILE, E IMAGEN
+            - ssh -i ~/.ssh/id_rsa -T $SSH_USER@${HOST} "/docker/imagenes/scripts/orquestador-2-santi.bash --servicio ${SERVICIO} --jar target/${JAR}-0.0.1-SNAPSHOT.jar --config ${PROPERTIES}.properties --ejecucion 'java -Xms512M -Xmx512M -jar -Dspring.profiles.active=${ACTIVE_PROFILE} ${JAR}-0.0.1-SNAPSHOT.jar' --imagen ${IMAGEN}"
+
+pipelines:
+  branches:
+    default:
+      - step:
+          <<: *Running-Build-verify
+    
+    test:
+      - step:
+          <<: *Running-Build-package
+      - step:
+          deployment: Test
+          <<: *Deploy-Runner
+    dev:
+      - step:
+          <<: *Running-Build-package      
+      - step:
+          deployment: Dev
+          <<: *Deploy-Runner
+            
+    master:
+      - step:
+          <<: *Running-Build-package
+      - step:
+          deployment: Prod
+          <<: *Deploy-Runner
