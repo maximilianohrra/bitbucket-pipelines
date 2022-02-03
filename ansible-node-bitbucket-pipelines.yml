@@ -1,0 +1,29 @@
+# THIS PIPE RUNS AN ANSIBLE PB
+options: 
+ size: 2x
+definitions:
+  steps:
+    -step: &Deploy-Runner
+        name: 'SCP & SSH Runner'
+        runs-on:
+          - 'experta'
+        image: eeacms/scp-server
+        script:
+          - mkdir -p ~/.ssh/
+          - ssh-keyscan -t rsa $HOST_TEST > my_known_hosts
+          - cat my_known_hosts >> ~/.ssh/known_hosts
+          - (umask  077 ; echo $SSH_PRIVATE_KEY | base64 --decode > ~/.ssh/id_rsa)
+          - scp -i ~/.ssh/id_rsa -r ./* $SSH_USER@$HOST_TEST:/docker/servicios/${SERVICE_NAME}/.
+          - echo "${SERVICE_NAME}"
+          - ssh -i ~/.ssh/id_rsa -T $SSH_USER@$HOST_TEST "ansible-playbook -e directorio=/docker/servicios/${SERVICE_NAME} -e nombreproyecto=${SERVICE_NAME} -e secrets=${SECRETS} /home/jenkins/ansible/kubernetes/${SERVICE_NAME}/buildndeploy.yaml"
+
+pipelines:
+  branches:
+    master:
+      - step:
+          deployment: Production
+          <<: *Deploy-Runner
+    dev:
+      - step:
+          deployment: dev
+          <<: *Deploy-Runner
