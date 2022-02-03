@@ -1,0 +1,103 @@
+clone:
+  depth: full
+
+definitions:
+  services:
+    docker:
+      memory: 6656
+  caches:
+    sonar: ~/.sonar/cache
+  steps:
+    - step: &Running-Build-verify
+        name: 'Running-Build'
+        runs-on:
+          - 'experta'
+        image: maven:3.6.3-adoptopenjdk-11
+        caches:
+          - maven
+        script:
+          - mvn verify
+        artifacts:
+          - target/*.jar
+          - target/classes/*
+          - src/main/resources/*.properties
+          - src/main/resources/logback-spring.xml
+
+    - step: &Analyze-Sonarqube
+        runs-on:
+          - 'experta'
+        name: 'Analyze code with Sonarqube'
+        image: maven:3.6.3-adoptopenjdk-11
+        caches:
+          - maven
+          - sonar
+        script:
+          - mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+
+    - step: &Running-Build-package
+        runs-on:
+          - 'experta'
+        name: 'Running Build'
+        image: maven:3.6.3-adoptopenjdk-11
+        caches:
+          - maven
+        script:
+          - mvn package
+        artifacts:
+          - target/*.jar
+          - src/main/resources/*.properties
+          - src/main/resources/logback-spring.xml
+
+    - step: &Deploy-Runner
+        name: 'SCP & SSH Runner'
+        runs-on:
+          - 'experta'
+        image: eeacms/scp-server
+        script:
+            #crea dir oculta .ssh
+            - mkdir -p ~/.ssh/
+            # scanea la llave y la guarda en un archivo de host y la guarda en el dir
+            - ssh-keyscan -t rsa ${HOST} > my_known_host
+            - cat my_known_hosts >> ~/.ssh/known_hosts
+            # Decodifica la key y la ingresa en el dir con nombre id_rsa
+            - (umask  077 ; echo $SSH_PRIVATE_KEY | base64 --decode > ~/.ssh/id_rsa)
+            # Aplica variables de entorno y substituye en el .env del host
+            - ssh $SSH_USER@${HOST} envsubst < env.tmp.template | tee .env
+            # Se crea carpeta en el directorio del host
+            - ssh -i ~/.ssh/id_rsa $SSH_USER@${HOST} "mkdir -p /docker/servicios/${SERVICIO}"
+            # Se realiza una copia recursiva de los directorios correspondientes y las properties dentro de la carpeta del servicio a crear
+            - scp -i ~/.ssh/id_rsa -r ./src/main/resources/logback-spring.xml  ./target ./Dockerfile ./src/main/resources/*.properties $SSH_USER@${HOST}:/docker/servicios/${SERVICIO}/.
+          # verificar copia de directorios:
+          # - scp -i ~/.ssh/id_rsa -r ./target ./src/main/resources/*.properties $SSH_USER@${HOST}:/docker/servicios/${SERVICIO}/.
+
+            # Se ejecuta el script tomando como variantes SERVICIO, .JAR,  .PROPERTIES, ACTIVE-PROFILE, E IMAGEN
+            - ssh -i ~/.ssh/id_rsa -T $SSH_USER@${HOST} "/docker/imagenes/scripts/orquestador.bash --servicio ${SERVICIO} --jar target/${JAR}-0.0.1-SNAPSHOT.jar --config ${PROPERTIES}.properties --ejecucion 'java -Xms512M -Xmx512M -jar -Dspring.profiles.active=${ACTIVE_PROFILE} ${JAR}-0.0.1-SNAPSHOT.jar' --imagen ${IMAGEN}"
+pipelines:
+  branches:
+    default:
+      - step:
+          <<: *Running-Build-verify
+      - step:
+          <<: *Analyze-Sonarqube
+    dev:
+      - step:
+          <<: *Running-Build-package
+      - step:
+          deployment: Dev
+          <<: *Deploy-Runner
+
+  custom:
+    test:
+      - step:
+          <<: *Running-Build-package
+      - step:
+          deployment: Test
+          trigger: manual
+          <<: *Deploy-Runner
+    master:
+      - step:
+          <<: *Running-Build-package
+      - step:
+          deployment: Prod
+          trigger: manual
+          <<: *Deploy-Runner
