@@ -56,7 +56,7 @@ definitions:
             # Se realiza una copia recursiva de los directorios correspondientes y las properties dentro de la carpeta del servicio a crear
             - scp -i ~/.ssh/id_rsa -r ./target ./src/main/resources/*.properties $SSH_USER@${HOST}:/docker/servicios/${SERVICIO}/.
             # Se ejecuta el script tomando como variantes SERVICIO, .JAR,  .PROPERTIES, ACTIVE-PROFILE, E IMAGEN
-            - ssh -i ~/.ssh/id_rsa -T $SSH_USER@${HOST} "/docker/imagenes/scripts/orquestador-2-santi.bash --servicio ${SERVICIO} --jar target/${JAR}-0.0.1-SNAPSHOT.jar --config ${PROPERTIES}.properties --ejecucion 'java -Xms512M -Xmx512M -jar -Dspring.profiles.active=${ACTIVE_PROFILE} ${JAR}-0.0.1-SNAPSHOT.jar' --imagen ${IMAGEN}"
+            - ssh -i ~/.ssh/id_rsa -T $SSH_USER@${HOST} "/docker/imagenes/scripts/orquestador.bash --servicio ${SERVICIO} --jar target/${JAR}-0.0.1-SNAPSHOT.jar --config ${PROPERTIES}.properties --ejecucion 'java -Xms512M -Xmx512M -jar -Dspring.profiles.active=${ACTIVE_PROFILE} ${JAR}-0.0.1-SNAPSHOT.jar' --imagen ${IMAGEN}"
 
 pipelines:
   branches:
